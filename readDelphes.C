@@ -171,6 +171,30 @@ void readDelphes(const char *inputFile) {
   hists.push_back(&histTrackInvariantMass);
   TH1F histTrackDr("track_dR", ";dR between tracks;Tracks / bin", 50, 0.0, 5.0);
   hists.push_back(&histTrackDr);
+  TH1F histTrackDrLeading("track_dR_leading", ";dR between leading track and other tracks;Tracks / bin", 50, 0.0, 5.0);
+  hists.push_back(&histTrackDrLeading);
+  TH1F histTrackSameHemisphereDrLeading("track_sameHemisphere_dR_leading", ";dR between leading track and other tracks in same hemisphere;Tracks / bin", 50, 0.0, 5.0);
+  hists.push_back(&histTrackSameHemisphereDrLeading);
+  TH1F histTrackSameHemisphereN("track_sameHemisphere_N", ";Track N in same hemisphere as leading track;Tracks / bin", 50, -0.5, 49.5);
+  hists.push_back(&histTrackSameHemisphereN);
+  TH1F histTrackSameHemispherePt("track_sameHemisphere_pt", ";Track p_{T} in same hemisphere as leading track [GeV];Tracks / 1 GeV", 50, 0.0, 50.0);
+  hists.push_back(&histTrackSameHemispherePt);
+  TH1F histTrackSameHemisphereEta("track_sameHemisphere_eta", ";Track #eta in same hemisphere as leading track;Tracks / bin", 60, -3., 3.);
+  hists.push_back(&histTrackSameHemisphereEta);
+  TH1F histTrackSameHemispherePhi("track_sameHemisphere_phi", ";Track #phi in same hemisphere as leading track;Tracks / bin", 64, -3.2, 3.2);
+  hists.push_back(&histTrackSameHemispherePhi);
+
+
+  TH1F histTrackOppositeHemisphereDrLeading("track_oppositeHemisphere_dR_leading", ";dR between leading track and other tracks in opposite hemisphere;Tracks / bin", 50, 0.0, 5.0);
+  hists.push_back(&histTrackOppositeHemisphereDrLeading);
+  TH1F histTrackOppositeHemisphereN("track_oppositeHemisphere_N", ";Track N in opposite hemisphere to leading track;Tracks / bin", 50, -0.5, 49.5);
+  hists.push_back(&histTrackOppositeHemisphereN);
+  TH1F histTrackOppositeHemispherePt("track_oppositeHemisphere_pt", ";Track p_{T} in opposite hemisphere to leading track [GeV];Tracks / 1 GeV", 50, 0.0, 50.0);
+  hists.push_back(&histTrackOppositeHemispherePt);
+  TH1F histTrackOppositeHemisphereEta("track_oppositeHemisphere_eta", ";Track #eta in opposite hemisphere to leading track;Tracks / bin", 60, -3., 3.);
+  hists.push_back(&histTrackOppositeHemisphereEta);
+  TH1F histTrackOppositeHemispherePhi("track_oppositeHemisphere_phi", ";Track #phi in opposite hemisphere to leading track;Tracks / bin", 64, -3.2, 3.2);
+  hists.push_back(&histTrackOppositeHemispherePhi);
 
   std::vector<TH2F*> hists_2d;
   TH2F histTrackInvariantMassVsDR("track_invariantMass_vs_dR", ";Track Invariant Mass [GeV];dR between tracks", 100, 0.0, 200.0, 50, 0.0, 5.0);
@@ -185,8 +209,11 @@ void readDelphes(const char *inputFile) {
 
   numberOfEntries = 10000;
   for (Long64_t entry = 0; entry < numberOfEntries; ++entry) {
-    std::cout << "----------------------------------------" << std::endl;
-    std::cout << "Event " << entry << std::endl;
+    if (debug > 0) {
+      std::cout << "----------------------------------------" << std::endl;
+      std::cout << "Event " << entry << std::endl;
+    }
+
     if (entry % 2000 == 0) {
       std:cout << "Processing event " << entry << std::endl;
     }
@@ -393,18 +420,24 @@ void readDelphes(const char *inputFile) {
               [](Track* a, Track* b) { return a->PT > b->PT; });
 
     int numTrack = 0;
+    int numTrackSameHemisphere = 0;
+    int numTrackOppositeHemisphere = 0;
+    double leadingTrackEta = -99.0;
+    double leadingTrackPhi = -99.0;
     for (int i = 0; i < sorted_tracks.size(); ++i) {
       Track *track = sorted_tracks[i];
       if (!track) continue;
       auto trackPt = track->PT;
       if (trackPt < cut_minTrackPt_) continue;
-      std::cout << "Track pt is " << trackPt <<  std::endl;
       auto trackEta = track->Eta;
+      auto trackPhi = track->Phi;
       if (std::abs(trackEta) > 2.5) continue;
       auto trackD0 = track->D0;
       if (std::abs(trackD0) > 0.05) continue;
       auto trackDz = track->DZ;
       if (std::abs(trackDz) > 0.05) continue;
+      if (leadingTrackEta == -99.0) leadingTrackEta = trackEta;
+      if (leadingTrackPhi == -90.0) leadingTrackPhi = trackPhi;
       auto trackCharge = track->Charge;
       // fill PID histogram
       auto trackPID = abs(track->PID);
@@ -445,6 +478,23 @@ void readDelphes(const char *inputFile) {
       } else {
         std::cout << "Track PID is " << trackPID <<  std::endl;
       }
+      double deltaEta_leadingTrack = leadingTrackEta - trackEta;
+      double deltaPhi_leadingTrack = TVector2::Phi_mpi_pi(leadingTrackPhi - trackPhi);
+      double dR_leadingTrack = std::sqrt(deltaEta_leadingTrack * deltaEta_leadingTrack + deltaPhi_leadingTrack * deltaPhi_leadingTrack);
+      histTrackDrLeading.Fill(dR_leadingTrack);
+      if (deltaPhi_leadingTrack < TMath::Pi()/2.0) { // same hemisphere
+        histTrackSameHemisphereDrLeading.Fill(dR_leadingTrack);
+        histTrackSameHemispherePt.Fill(trackPt);
+        histTrackSameHemisphereEta.Fill(trackEta);
+        histTrackSameHemispherePhi.Fill(trackPhi);
+        numTrackSameHemisphere++;
+      } else {
+        histTrackOppositeHemisphereDrLeading.Fill(dR_leadingTrack);
+        histTrackOppositeHemispherePt.Fill(trackPt);
+        histTrackOppositeHemisphereEta.Fill(trackEta);
+        histTrackOppositeHemispherePhi.Fill(trackPhi);
+        numTrackOppositeHemisphere++;
+      }
       // if (trackPID != 11) continue;
       histTrackPt.Fill(trackPt);
       histTrackEta.Fill(trackEta);
@@ -484,6 +534,8 @@ void readDelphes(const char *inputFile) {
       } // end loop on tracks for invariant mass
     } // end loop on tracks
     histTrackN.Fill(numTrack);
+    histTrackSameHemisphereN.Fill(numTrackSameHemisphere);
+    histTrackOppositeHemisphereN.Fill(numTrackOppositeHemisphere);
 
 
 
