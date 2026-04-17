@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <iostream>
 #include <cstring>
 #include <vector>
+#include <complex>
 #include <cmath>
 #include "TChain.h"
 #include "TFile.h"
@@ -14,6 +16,223 @@ R__LOAD_LIBRARY(/Users/blackmac/Software/Delphes/libDelphes.so)
 #include "external/ExRootAnalysis/ExRootTreeReader.h"
 #include "external/ExRootAnalysis/ExRootResult.h"
 #endif
+
+#include <vector>
+#include <complex>
+#include <cmath>
+#include <algorithm>
+#include <iostream>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+// Simple helper functions with inline keyword for ROOT JIT
+inline double c_sum(const std::vector<double>& vec) {
+    double sum = 0.0;
+    for (size_t i = 0; i < vec.size(); ++i) {
+        sum += vec[i];
+    }
+    return sum;
+}
+
+inline std::vector<double> calculate_power(const std::vector<double>& vec, double exponent) {
+    std::vector<double> result(vec.size());
+    for (size_t i = 0; i < vec.size(); ++i) {
+        result[i] = std::pow(vec[i], exponent);
+    }
+    return result;
+}
+
+inline std::vector<std::vector<double>> order_by_pt(const std::vector<std::vector<double>>& pN) {
+    std::vector<std::vector<double>> result = pN;
+    
+    std::sort(result.begin(), result.end(), 
+        [](const std::vector<double>& a, const std::vector<double>& b) {
+            double pt_a = std::sqrt(a[1]*a[1] + a[2]*a[2]);
+            double pt_b = std::sqrt(b[1]*b[1] + b[2]*b[2]);
+            return pt_a > pt_b;
+        });
+    
+    return result;
+}
+
+// Main function
+inline std::vector<double> psDistance(
+    std::vector<std::vector<double>> pN_evt1,
+    std::vector<std::vector<double>> pN_evt2,
+    bool E_plus_pz_onSimplex = false,
+    double Sphere2Simplex = 4.0,
+    bool l_has_chi = false,
+    double Chi2Simplex = 16.0 * M_PI * M_PI
+) {
+    pN_evt1 = order_by_pt(pN_evt1);
+    pN_evt2 = order_by_pt(pN_evt2);
+    
+    int N = pN_evt1.size();
+    // std::cout << "N: " << N << std::endl;
+    
+    double E_evt1 = 0.0, pz_evt1 = 0.0;
+    double E_evt2 = 0.0, pz_evt2 = 0.0;
+    
+    for (int i = 0; i < N; ++i) {
+        E_evt1 += pN_evt1[i][0];
+        pz_evt1 += pN_evt1[i][3];
+        E_evt2 += pN_evt2[i][0];
+        pz_evt2 += pN_evt2[i][3];
+    }
+    
+    double chi_evt1 = (E_evt1 - pz_evt1) / (E_evt1 + pz_evt1);
+    double chi_evt2 = (E_evt2 - pz_evt2) / (E_evt2 + pz_evt2);
+    
+    std::vector<double> uN_evt1(N), uN_evt2(N);
+    std::vector<std::complex<double>> vN_evt1(N), vN_evt2(N);
+    
+    double sqrt_factor1, sqrt_factor2, sqrt_factor3, sqrt_factor4;
+    
+    if (E_plus_pz_onSimplex) {
+        sqrt_factor1 = 1.0 / std::sqrt(E_evt1 + pz_evt1);
+        sqrt_factor2 = 1.0 / std::sqrt(E_evt2 + pz_evt2);
+        sqrt_factor3 = 1.0 / std::sqrt(E_evt1 - pz_evt1);
+        sqrt_factor4 = 1.0 / std::sqrt(E_evt2 - pz_evt2);
+        
+        for (int i = 0; i < N; ++i) {
+            uN_evt1[i] = sqrt_factor1 * std::sqrt(pN_evt1[i][0] + pN_evt1[i][3]);
+            uN_evt2[i] = sqrt_factor2 * std::sqrt(pN_evt2[i][0] + pN_evt2[i][3]);
+            
+            vN_evt1[i] = sqrt_factor3 * std::complex<double>(pN_evt1[i][1], pN_evt1[i][2]) / 
+                         std::sqrt(pN_evt1[i][0] + pN_evt1[i][3]);
+            vN_evt2[i] = sqrt_factor4 * std::complex<double>(pN_evt2[i][1], pN_evt2[i][2]) / 
+                         std::sqrt(pN_evt2[i][0] + pN_evt2[i][3]);
+        }
+    } else {
+        sqrt_factor1 = 1.0 / std::sqrt(E_evt1 - pz_evt1);
+        sqrt_factor2 = 1.0 / std::sqrt(E_evt2 - pz_evt2);
+        sqrt_factor3 = 1.0 / std::sqrt(E_evt1 + pz_evt1);
+        sqrt_factor4 = 1.0 / std::sqrt(E_evt2 + pz_evt2);
+        
+        for (int i = 0; i < N; ++i) {
+            uN_evt1[i] = sqrt_factor1 * std::sqrt(pN_evt1[i][0] - pN_evt1[i][3]);
+            uN_evt2[i] = sqrt_factor2 * std::sqrt(pN_evt2[i][0] - pN_evt2[i][3]);
+            
+            vN_evt1[i] = sqrt_factor3 * std::complex<double>(pN_evt1[i][1], pN_evt1[i][2]) / 
+                         std::sqrt(pN_evt1[i][0] - pN_evt1[i][3]);
+            vN_evt2[i] = sqrt_factor4 * std::complex<double>(pN_evt2[i][1], pN_evt2[i][2]) / 
+                         std::sqrt(pN_evt2[i][0] - pN_evt2[i][3]);
+        }
+    }
+    
+    std::vector<double> rhoN_evt1 = calculate_power(uN_evt1, 2.0);
+    std::vector<double> rhoN_evt2 = calculate_power(uN_evt2, 2.0);
+    
+    std::vector<std::complex<double>> vprimeNminus1_evt1(N-1);
+    std::vector<std::complex<double>> vprimeNminus1_evt2(N-1);
+    
+    if (N == 2) {
+        for (int i = 0; i < N-1; ++i) {
+            vprimeNminus1_evt1[i] = vN_evt1[i] / std::sqrt(rhoN_evt1[1]);
+            vprimeNminus1_evt2[i] = vN_evt2[i] / std::sqrt(rhoN_evt2[1]);
+        }
+    } else {
+        for (int i = 0; i < N-1; ++i) {
+            std::complex<double> vprime_i_evt1(0.0, 0.0);
+            
+            for (int j = 0; j < N-1; ++j) {
+                if (i == j) {
+                    double factor = std::pow(uN_evt1[i], 2) + uN_evt1[N-1] * 
+                                   (1 - std::pow(uN_evt1[i], 2) - std::pow(uN_evt1[N-1], 2));
+                    vprime_i_evt1 += factor * vN_evt1[i];
+                } else {
+                    double factor = uN_evt1[i] * uN_evt1[j] * (1 - uN_evt1[N-1]);
+                    vprime_i_evt1 += factor * vN_evt1[j];
+                }
+            }
+            
+            vprime_i_evt1 /= (uN_evt1[N-1] * (1 - std::pow(uN_evt1[N-1], 2)));
+            vprimeNminus1_evt1[i] = vprime_i_evt1;
+        }
+        
+        for (int i = 0; i < N-1; ++i) {
+            std::complex<double> vprime_i_evt2(0.0, 0.0);
+            
+            for (int j = 0; j < N-1; ++j) {
+                if (i == j) {
+                    double factor = std::pow(uN_evt2[i], 2) + uN_evt2[N-1] * 
+                                   (1 - std::pow(uN_evt2[i], 2) - std::pow(uN_evt2[N-1], 2));
+                    vprime_i_evt2 += factor * vN_evt2[i];
+                } else {
+                    double factor = uN_evt2[i] * uN_evt2[j] * (1 - uN_evt2[N-1]);
+                    vprime_i_evt2 += factor * vN_evt2[j];
+                }
+            }
+            
+            vprime_i_evt2 /= (uN_evt2[N-1] * (1 - std::pow(uN_evt2[N-1], 2)));
+            vprimeNminus1_evt2[i] = vprime_i_evt2;
+        }
+    }
+    
+    // Compute distances
+    double l_chi = std::fabs(std::log(chi_evt1) - std::log(chi_evt2));
+    
+    std::vector<double> diff(N);
+    for (int i = 0; i < N; ++i) {
+        diff[i] = rhoN_evt2[i] - rhoN_evt1[i];
+    }
+    double l_simplex = std::sqrt(c_sum(calculate_power(diff, 2)));
+    
+    std::complex<double> dot_product1(0.0, 0.0);
+    for (int i = 0; i < N-1; ++i) {
+        dot_product1 += vprimeNminus1_evt1[i] * std::conj(vprimeNminus1_evt2[i]);
+    }
+    double dot_product1_abs = std::abs(dot_product1);
+    
+    if (dot_product1_abs > 1.0 && std::fabs(dot_product1_abs - 1.0) <= (1e-02 + 1e-05 * 1.0)) {
+        dot_product1_abs = std::round(dot_product1_abs);
+    }
+    
+    std::complex<double> dot_product2(0.0, 0.0);
+    for (int i = 0; i < N-1; ++i) {
+        dot_product2 += vprimeNminus1_evt1[i] * vprimeNminus1_evt2[i];
+    }
+    double dot_product2_abs = std::abs(dot_product2);
+    
+    if (dot_product2_abs > 1.0 && std::fabs(dot_product2_abs - 1.0) <= (1e-02 + 1e-05 * 1.0)) {
+        dot_product2_abs = std::round(dot_product2_abs);
+    }
+    
+    double l_sphere;
+    if (dot_product1_abs <= 1.0 && dot_product2_abs <= 1.0) {
+        l_sphere = std::acos(std::fmax(dot_product1_abs, dot_product2_abs));
+    } else {
+        l_sphere = -1.0;
+    }
+    
+    double l;
+    double OverallFactor;
+    
+    if (!l_has_chi) {
+        OverallFactor = (1.0 / (4.0 * M_PI * M_PI * Sphere2Simplex)) * 
+                       std::pow(Sphere2Simplex / 4.0, (N - 1.0) / (3.0 * N - 4.0));
+        if (l_sphere >= 0) {
+            l = std::sqrt(OverallFactor * (std::pow(l_simplex, 2) + Sphere2Simplex * std::pow(l_sphere, 2)));
+        } else {
+            l = -1.0;
+        }
+    } else {
+        OverallFactor = (1.0 / (4.0 * M_PI * M_PI * Sphere2Simplex)) * 
+                       std::pow(Sphere2Simplex / 4.0, N / (3.0 * N - 3.0)) * 
+                       std::pow(Chi2Simplex / (16.0 * M_PI * M_PI), -1.0 / (3.0 * N - 3.0));
+        if (l_sphere >= 0) {
+            l = std::sqrt(OverallFactor * (std::pow(l_simplex, 2) + 
+                                          Sphere2Simplex * std::pow(l_sphere, 2) + 
+                                          Chi2Simplex * std::pow(l_chi, 2)));
+        } else {
+            l = -1.0;
+        }
+    }
+    
+    return {l, l_simplex, l_sphere, l_chi};
+}
 
 /*
  example running
@@ -207,7 +426,8 @@ void readDelphes(const char *inputFile) {
   // Min track pt requirement
   const double cut_minTrackPt_ = 5.0; // GeV
 
-  numberOfEntries = 10000;
+  // numberOfEntries = 10000;
+  numberOfEntries = 10;
   for (Long64_t entry = 0; entry < numberOfEntries; ++entry) {
     if (debug > 0) {
       std::cout << "----------------------------------------" << std::endl;
@@ -545,8 +765,27 @@ void readDelphes(const char *inputFile) {
     // -------------------------------------------------------------------------------
   } // end loop on events
 
+  std::vector<std::vector<double>> event1 = {
+      {100.0, 10.0, 20.0, 95.0},  // [E, px, py, pz]
+      {80.0, -5.0, 15.0, 78.0}
+  };
 
+    std::vector<std::vector<double>> event2 = {
+      {100.0, 10.0, 20.0, 95.0},  // [E, px, py, pz]
+      {80.0, -5.0, 15.0, 78.0}
+  };
 
+  // std::vector<std::vector<double>> event2 = {
+  //     {105.0, 12.0, 18.0, 98.0},
+  //     {75.0, -6.0, 14.0, 72.0}
+  // };
+
+  auto distances = psDistance(event1, event2);
+  std::cout << "Phase space distances between event 1 and event 2:"
+  << "\n\tl(total distance): " <<  distances[0] << ",\n\tl(simplex): " <<
+  distances[1] << ",\n\tl(sphere): " <<
+  distances[2] << ",\n\tl(chi): " <<
+  distances[3] << std::endl;
 
   std::string outputFileName = "./Histos_" + sampleName + ".root";
   TFile outputFile(outputFileName.c_str(), "RECREATE");
